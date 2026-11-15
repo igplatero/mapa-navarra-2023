@@ -33,6 +33,17 @@
   .num { text-align:right; font-variant-numeric:tabular-nums; }
   .src { margin-top:16px; font-size:12px; color:var(--muted); }
   #map { height:100%; }
+  .brand { display:block; height:36px; max-width:100%; margin:0 0 14px; object-fit:contain; object-position:left; }
+  .maplibregl-popup-content { padding:12px 14px; border-radius:8px; font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink); }
+  .pop h3 { font:700 17px/1.2 Georgia,serif; margin:0 16px 2px 0; }
+  .pop .where { margin:0 0 6px; }
+  .pop table { border-collapse:collapse; width:100%; }
+  .pop td { padding:3px 0; vertical-align:middle; }
+  .pop tr:first-child td { font-weight:700; }
+  .pop td.lg { width:32px; }
+  .pop td.lg img { display:block; height:22px; max-width:28px; object-fit:contain; }
+  .pop td.n { text-align:right; padding-left:10px; font-variant-numeric:tabular-nums; }
+  .pop .foot { margin:6px 0 0; color:var(--muted); font-size:12px; }
   @media (max-width:760px) {
     .app { grid-template-columns:1fr; height:auto; }
     #map { order:-1; height:62vh; }
@@ -44,6 +55,7 @@
 <body>
 <div class="app">
   <aside>
+    <img class="brand" src="logos/logo-periodico.png" alt="Diario de Noticias de Navarra" onerror="this.remove()">
     <h1>Así votó cada rincón de Navarra</h1>
     <p class="sub">Elecciones generales del 23 de julio de 2023, por sección censal. Elige qué quieres ver y toca el mapa.</p>
     <div class="search">
@@ -61,9 +73,9 @@
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 const P = [
-  { k:'PSN-PSOE', c:'#d6342c' }, { k:'PP', c:'#3a9ad9' }, { k:'UPN', c:'#1c3f94' },
-  { k:'EH Bildu', c:'#14a085' }, { k:'Sumar', c:'#c2338a' }, { k:'Vox', c:'#7a9a2a' },
-  { k:'Geroa Bai', c:'#f09a2b' }
+  { k:'PSN-PSOE', c:'#d6342c', l:'psoe' }, { k:'PP', c:'#3a9ad9', l:'pp' }, { k:'UPN', c:'#1c3f94', l:'upn' },
+  { k:'EH Bildu', c:'#14a085', l:'bildu' }, { k:'Sumar', c:'#c2338a', l:'sumar' }, { k:'Vox', c:'#7a9a2a', l:'vox' },
+  { k:'Geroa Bai', c:'#f09a2b', l:'geroabai' }
 ];
 const OTROS = '#9aa0a6';
 const f1 = x => x.toLocaleString('es-ES', { minimumFractionDigits:1, maximumFractionDigits:1 });
@@ -73,6 +85,14 @@ const quant = (a, p) => { const s = [...a].sort((x, y) => x - y); return s[Math.
 const $ = id => document.getElementById(id);
 
 let data, map, mode = 'ganador', selected = null, S = { max:{} };
+let swapping = false;
+const popup = new maplibregl.Popup({ closeOnClick:false, maxWidth:'310px' });
+popup.on('close', () => {
+  if (swapping) return;
+  selected = null;
+  map.setFilter('sel', ['==', ['get','CUSEC'], '']);
+  render(null);
+});
 
 const map_ = new maplibregl.Map({
   container:'map',
@@ -120,6 +140,8 @@ function init() {
     selected = f ? f.properties.CUSEC : null;
     map.setFilter('sel', ['==', ['get','CUSEC'], selected || '']);
     render(f ? f.properties : null);
+    swapping = true; popup.remove(); swapping = false;
+    if (f) { popup.setLngLat(e.lngLat).setHTML(popupHTML(f.properties)).addTo(map); fixLogos(popup.getElement()); }
   });
 
   $('q').addEventListener('change', e => goTo(e.target.value));
@@ -161,6 +183,30 @@ function render(p) {
     '<p class="where">Distrito ' + cu.slice(5, 7) + ', sección ' + cu.slice(7) + '. Participó el ' + f1(p.participacion_pct) + ' % del censo (' + f0(p.votantes) + ' de ' + f0(p.censo) + ' electores).</p>' +
     rows.map(r => '<div class="bar"><span>' + r.k + '</span><div class="track"><div class="fill" style="width:' + (100 * r.pct / top) + '%;background:' + r.c + '"></div></div><span class="num">' + f1(r.pct) + ' %</span></div>').join('') +
     '<p class="where">Porcentajes sobre ' + f0(p.votos_candidaturas) + ' votos a candidaturas. En blanco: ' + f0(p.blancos) + '. Nulos: ' + f0(p.nulos) + '.</p>';
+}
+
+function popupHTML(p) {
+  const rows = P.map(x => ({ k:x.k, c:x.c, l:x.l, v:p['votos_' + x.k], pct:p['pct_' + x.k] }))
+    .concat([{ k:'Otros', c:OTROS, v:p.votos_otros, pct:p.pct_otros }])
+    .sort((a, b) => b.v - a.v);
+  const cu = String(p.CUSEC);
+  const logo = r => r.l
+    ? '<img src="logos/' + r.l + '.png" alt="" data-c="' + r.c + '">'
+    : '<span class="sw" style="background:' + r.c + '"></span>';
+  return '<div class="pop"><h3>' + p.NMUN + '</h3>' +
+    '<p class="where">Distrito ' + cu.slice(5, 7) + ', sección ' + cu.slice(7) + '</p><table>' +
+    rows.map(r => '<tr><td class="lg">' + logo(r) + '</td><td>' + r.k + '</td><td class="n">' + f0(r.v) + ' votos</td><td class="n">' + f1(r.pct) + ' %</td></tr>').join('') +
+    '</table><p class="foot">Participación: ' + f1(p.participacion_pct) + ' %. En blanco: ' + f0(p.blancos) + '. Nulos: ' + f0(p.nulos) + '.</p></div>';
+}
+
+// Si falta el logo de un partido, se muestra un círculo con su color
+function fixLogos(root) {
+  root.querySelectorAll('img[data-c]').forEach(img => img.addEventListener('error', () => {
+    const dot = document.createElement('span');
+    dot.className = 'sw';
+    dot.style.background = img.dataset.c;
+    img.replaceWith(dot);
+  }));
 }
 
 function goTo(q) {
