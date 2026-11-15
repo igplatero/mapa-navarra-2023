@@ -33,6 +33,10 @@
   .num { text-align:right; font-variant-numeric:tabular-nums; }
   .src { margin-top:16px; font-size:12px; color:var(--muted); }
   #map { height:100%; }
+  .lbl { font:600 12px/1 system-ui,-apple-system,"Segoe UI",sans-serif; color:#1b2430; white-space:nowrap; pointer-events:none;
+         text-shadow:0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff, 0 0 2px #fff; }
+  .lbl.big { font-size:14px; font-weight:700; }
+  .lbl.bar { font-size:12px; font-weight:600; font-style:italic; }
   .brand { display:block; height:36px; max-width:100%; margin:0 0 14px; object-fit:contain; object-position:left; }
   .maplibregl-popup-content { padding:12px 14px; border-radius:8px; font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink); }
   .pop h3 { font:700 17px/1.2 Georgia,serif; margin:0 16px 2px 0; }
@@ -109,9 +113,15 @@ function showError() {
 }
 
 let ready = false, started = false;
-const start = () => { if (ready && data && !started) { started = true; init(); } };
+let muns, nav, bar;
+const start = () => { if (ready && data && muns !== undefined && nav !== undefined && bar !== undefined && !started) { started = true; init(); } };
 map.on('load', () => { ready = true; start(); });
+// Los municipios y el contorno son opcionales: si faltan, el mapa funciona igual sin ellos
+const opcional = (url, ok) => fetch(url).then(r => r.json()).then(ok).catch(() => ok(null)).then(start);
 fetch('navarra_secciones_2023.geojson').then(r => r.json()).then(d => { data = d; start(); }).catch(showError);
+opcional('navarra_municipios.geojson', d => { muns = d; });
+opcional('navarra_contorno.geojson', d => { nav = d; });
+opcional('pamplona_barrios.geojson', d => { bar = d; });
 
 function init() {
   P.forEach(p => { S.max[p.k] = Math.max(quant(data.features.map(f => f.properties['pct_' + p.k]), 0.95), 1); });
@@ -121,6 +131,22 @@ function init() {
   map.addSource('sec', { type:'geojson', data, promoteId:'CUSEC' });
   map.addLayer({ id:'fill', type:'fill', source:'sec', paint:{ 'fill-color':'#999', 'fill-opacity':1 } });
   map.addLayer({ id:'line', type:'line', source:'sec', paint:{ 'line-color':'#fff', 'line-width':0.4 } });
+  if (muns) {
+    map.addSource('mun', { type:'geojson', data:muns });
+    map.addLayer({ id:'mun-line', type:'line', source:'mun', paint:{ 'line-color':'#4a5563', 'line-opacity':0.75,
+      'line-width':['interpolate', ['linear'], ['zoom'], 7, 0.5, 11, 1.2] } });
+  }
+  if (bar) {
+    map.addSource('bar', { type:'geojson', data:bar });
+    map.addLayer({ id:'bar-line', type:'line', source:'bar', minzoom:11, layout:{ 'line-join':'round' }, paint:{ 'line-color':'#1b2430', 'line-opacity':0.85,
+      'line-width':['interpolate', ['linear'], ['zoom'], 11, 0.9, 14, 2] } });
+  }
+  if (muns || bar) buildLabels();
+  if (nav) {
+    map.addSource('nav', { type:'geojson', data:nav });
+    map.addLayer({ id:'nav-line', type:'line', source:'nav', layout:{ 'line-join':'round' }, paint:{ 'line-color':'#1b2430',
+      'line-width':['interpolate', ['linear'], ['zoom'], 7, 1.8, 11, 3] } });
+  }
   map.addLayer({ id:'muni', type:'line', source:'sec', filter:['==', ['get','NMUN'], ''], paint:{ 'line-color':'#1b2430', 'line-width':1.6 } });
   map.addLayer({ id:'sel', type:'line', source:'sec', filter:['==', ['get','CUSEC'], ''], paint:{ 'line-color':'#1b2430', 'line-width':2.6 } });
 
@@ -183,6 +209,49 @@ function render(p) {
     '<p class="where">Distrito ' + cu.slice(5, 7) + ', sección ' + cu.slice(7) + '. Participó el ' + f1(p.participacion_pct) + ' % del censo (' + f0(p.votantes) + ' de ' + f0(p.censo) + ' electores).</p>' +
     rows.map(r => '<div class="bar"><span>' + r.k + '</span><div class="track"><div class="fill" style="width:' + (100 * r.pct / top) + '%;background:' + r.c + '"></div></div><span class="num">' + f1(r.pct) + ' %</span></div>').join('') +
     '<p class="where">Porcentajes sobre ' + f0(p.votos_candidaturas) + ' votos a candidaturas. En blanco: ' + f0(p.blancos) + '. Nulos: ' + f0(p.nulos) + '.</p>';
+}
+
+// Etiquetas: los municipios más poblados primero; al acercar salen más, sin solaparse.
+// Los barrios de Pamplona aparecen con zoom alto y sustituyen al nombre de la ciudad.
+let labels = [];
+function buildLabels() {
+  const mk = (txt, e, lon, lat, cls, extra) => {
+    const el = document.createElement('div');
+    el.className = 'lbl ' + cls;
+    el.textContent = txt;
+    el.style.display = 'none';
+    new maplibregl.Marker({ element:el, anchor:'center' }).setLngLat([lon, lat]).addTo(map);
+    const big = cls === 'big';
+    return Object.assign({ el, e, lon, lat, w:txt.length * (big ? 8.2 : 6.8) + 8, h:big ? 18 : 15 }, extra);
+  };
+  if (muns) muns.features.forEach(f => {
+    const p = f.properties, txt = p.NMUN.split('/')[0];
+    labels.push(mk(txt, p.e, p.lon, p.lat, p.e >= 10000 ? 'big' : '', txt === 'Pamplona' && bar ? { hideAt:12.2 } : {}));
+  });
+  if (bar) bar.features.forEach(f => {
+    const p = f.properties;
+    labels.push(mk(p.NBAR.split('/')[0], 1e9, p.lon, p.lat, 'bar', { minZ:12.2 }));
+  });
+  labels.sort((a, b) => b.e - a.e);
+  map.on('moveend', updateLabels);
+  updateLabels();
+}
+
+function updateLabels() {
+  const z = map.getZoom(), W = map.getContainer().clientWidth, H = map.getContainer().clientHeight;
+  const min = z < 8.3 ? 9000 : z < 9.2 ? 3000 : z < 10 ? 1000 : z < 10.8 ? 300 : 0;
+  const placed = [];
+  labels.forEach(l => {
+    let show = l.e >= min && z >= (l.minZ || 0) && !(l.hideAt && z >= l.hideAt);
+    if (show) {
+      const pt = map.project([l.lon, l.lat]);
+      const b = { x1:pt.x - l.w / 2, x2:pt.x + l.w / 2, y1:pt.y - l.h / 2, y2:pt.y + l.h / 2 };
+      if (pt.x < -40 || pt.y < -20 || pt.x > W + 40 || pt.y > H + 20) show = false;
+      else if (placed.some(o => b.x1 < o.x2 && b.x2 > o.x1 && b.y1 < o.y2 && b.y2 > o.y1)) show = false;
+      else placed.push(b);
+    }
+    l.el.style.display = show ? '' : 'none';
+  });
 }
 
 function popupHTML(p) {
