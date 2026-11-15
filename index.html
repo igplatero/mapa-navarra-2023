@@ -69,7 +69,7 @@
     <div class="modes" id="modes"></div>
     <div class="legend" id="legend"></div>
     <div id="panel"></div>
-    <p class="src">Fuente: Ministerio del Interior (resultados por mesa) e INE (secciones censales de 2023). No incluye el voto de residentes en el extranjero.</p>
+    <p class="src">Fuente: Ministerio del Interior (resultados por mesa) e INE (secciones censales de 2023). No incluye el voto de residentes en el extranjero. Las zonas en gris claro no tienen sección censal (sin población residente), como las Bardenas Reales.</p>
   </aside>
   <div id="map"></div>
 </div>
@@ -113,8 +113,8 @@ function showError() {
 }
 
 let ready = false, started = false;
-let muns, nav, bar;
-const start = () => { if (ready && data && muns !== undefined && nav !== undefined && bar !== undefined && !started) { started = true; init(); } };
+let muns, nav, bar, sd;
+const start = () => { if (ready && data && muns !== undefined && nav !== undefined && bar !== undefined && sd !== undefined && !started) { started = true; init(); } };
 map.on('load', () => { ready = true; start(); });
 // Los municipios y el contorno son opcionales: si faltan, el mapa funciona igual sin ellos
 const opcional = (url, ok) => fetch(url).then(r => r.json()).then(ok).catch(() => ok(null)).then(start);
@@ -122,6 +122,7 @@ fetch('navarra_secciones_2023.geojson').then(r => r.json()).then(d => { data = d
 opcional('navarra_municipios.geojson', d => { muns = d; });
 opcional('navarra_contorno.geojson', d => { nav = d; });
 opcional('pamplona_barrios.geojson', d => { bar = d; });
+opcional('navarra_sin_datos.geojson', d => { sd = d; });
 
 function init() {
   P.forEach(p => { S.max[p.k] = Math.max(quant(data.features.map(f => f.properties['pct_' + p.k]), 0.95), 1); });
@@ -130,6 +131,10 @@ function init() {
 
   map.addSource('sec', { type:'geojson', data, promoteId:'CUSEC' });
   map.addLayer({ id:'fill', type:'fill', source:'sec', paint:{ 'fill-color':'#999', 'fill-opacity':1 } });
+  if (sd) {
+    map.addSource('sd', { type:'geojson', data:sd });
+    map.addLayer({ id:'sd-fill', type:'fill', source:'sd', paint:{ 'fill-color':'#dfe2e6' } }, 'fill');
+  }
   map.addLayer({ id:'line', type:'line', source:'sec', paint:{ 'line-color':'#fff', 'line-width':0.4 } });
   if (muns) {
     map.addSource('mun', { type:'geojson', data:muns });
