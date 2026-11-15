@@ -98,15 +98,41 @@ popup.on('close', () => {
   render(null);
 });
 
-const map_ = new maplibregl.Map({
-  container:'map',
-  style:{ version:8, sources:{}, layers:[{ id:'bg', type:'background', paint:{ 'background-color':'#f3f4f6' } }] },
-  bounds:[[-2.5, 41.9], [-0.72, 43.32]], fitBoundsOptions:{ padding:16 },
-  dragRotate:false, attributionControl:false
-});
-map = map_;
-map.touchZoomRotate.disableRotation();
-map.addControl(new maplibregl.NavigationControl({ showCompass:false }), 'top-right');
+const NAV = [[-2.5, 41.9], [-0.72, 43.32]];
+const PLAIN = { version:8, sources:{}, layers:[{ id:'bg', type:'background', paint:{ 'background-color':'#f3f4f6' } }] };
+let STREET_LABELS = [];
+
+// Base de calles de OpenFreeMap (gratuita, sin clave). Si no carga, el mapa sigue con fondo liso.
+function loadBase() {
+  return fetch('https://tiles.openfreemap.org/styles/positron').then(r => r.json()).then(s => {
+    const keep = ['water', 'waterway', 'landcover', 'landuse', 'park', 'transportation', 'building', 'aeroway'];
+    STREET_LABELS = s.layers.filter(l => l.type === 'symbol' && l['source-layer'] === 'transportation_name');
+    const layers = s.layers.filter(l => l.type === 'background' || (l.type !== 'symbol' && keep.includes(l['source-layer'])));
+    const { center, zoom, bearing, pitch, ...rest } = s;
+    return { ...rest, layers };
+  }).catch(() => PLAIN);
+}
+
+function boot(style) {
+  map = new maplibregl.Map({
+    container:'map', style, bounds:NAV, fitBoundsOptions:{ padding:16 }, dragRotate:false,
+    attributionControl:{ compact:true, customAttribution:'<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> © <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> Datos de <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>' }
+  });
+  map.touchZoomRotate.disableRotation();
+  map.addControl(new maplibregl.NavigationControl({ showCompass:false }), 'top-right');
+  map.on('load', () => { ready = true; limitZoom(); start(); });
+  map.on('resize', limitZoom);
+}
+
+// El zoom hacia atrás se detiene cuando Navarra encaja en el recuadro del mapa
+function limitZoom() {
+  const cam = map.cameraForBounds(NAV, { padding:16 });
+  if (!cam) return;
+  const atMin = map.getZoom() <= map.getMinZoom() + 0.05;
+  map.setMinZoom(cam.zoom);
+  map.setMaxBounds([[-4, 41], [1.2, 44.2]]);
+  if (atMin) map.fitBounds(NAV, { padding:16, animate:false });
+}
 
 function showError() {
   $('panel').innerHTML = '<h2>No se han podido cargar los datos</h2><p class="where">Comprueba que navarra_secciones_2023.geojson está en la misma carpeta que esta página. Si abres el archivo directamente desde tu ordenador, el navegador lo bloquea: publícalo en GitHub Pages o en tu servidor.</p>';
@@ -115,7 +141,7 @@ function showError() {
 let ready = false, started = false;
 let muns, nav, bar, sd;
 const start = () => { if (ready && data && muns !== undefined && nav !== undefined && bar !== undefined && sd !== undefined && !started) { started = true; init(); } };
-map.on('load', () => { ready = true; start(); });
+loadBase().then(boot);
 // Los municipios y el contorno son opcionales: si faltan, el mapa funciona igual sin ellos
 const opcional = (url, ok) => fetch(url).then(r => r.json()).then(ok).catch(() => ok(null)).then(start);
 fetch('navarra_secciones_2023.geojson').then(r => r.json()).then(d => { data = d; start(); }).catch(showError);
@@ -133,7 +159,7 @@ function init() {
   map.addLayer({ id:'fill', type:'fill', source:'sec', paint:{ 'fill-color':'#999', 'fill-opacity':1 } });
   if (sd) {
     map.addSource('sd', { type:'geojson', data:sd });
-    map.addLayer({ id:'sd-fill', type:'fill', source:'sd', paint:{ 'fill-color':'#dfe2e6' } }, 'fill');
+    map.addLayer({ id:'sd-fill', type:'fill', source:'sd', paint:{ 'fill-color':'#dfe2e6', 'fill-opacity':['interpolate', ['linear'], ['zoom'], 11, 1, 14, 0.6] } }, 'fill');
   }
   map.addLayer({ id:'line', type:'line', source:'sec', paint:{ 'line-color':'#fff', 'line-width':0.4 } });
   if (muns) {
@@ -154,6 +180,7 @@ function init() {
   }
   map.addLayer({ id:'muni', type:'line', source:'sec', filter:['==', ['get','NMUN'], ''], paint:{ 'line-color':'#1b2430', 'line-width':1.6 } });
   map.addLayer({ id:'sel', type:'line', source:'sec', filter:['==', ['get','CUSEC'], ''], paint:{ 'line-color':'#1b2430', 'line-width':2.6 } });
+  STREET_LABELS.forEach(l => map.addLayer(l));
 
   const names = [...new Set(data.features.map(f => f.properties.NMUN))].sort((a, b) => a.localeCompare(b, 'es'));
   $('munis').innerHTML = names.map(n => '<option value="' + n + '">').join('');
@@ -183,10 +210,11 @@ function init() {
 function setMode(m) {
   mode = m;
   document.querySelectorAll('#modes button').forEach(b => b.setAttribute('aria-pressed', b.dataset.m === m));
-  let color, opac = 1, from, to, max;
+  let color, opac = ['interpolate', ['linear'], ['zoom'], 11, 1, 14, 0.7], from, to, max;
   if (m === 'ganador') {
     color = ['match', ['get','ganador'], ...P.flatMap(p => [p.k, p.c]), '#999'];
-    opac = ['interpolate', ['linear'], ['get','pct_ganador'], 25, 0.5, 60, 1];
+    const g = (a, b) => ['interpolate', ['linear'], ['get','pct_ganador'], 25, a, 60, b];
+    opac = ['interpolate', ['linear'], ['zoom'], 11, g(0.5, 1), 14, g(0.3, 0.62)];
   } else if (m === 'participacion') {
     from = '#e6eef5'; to = '#1d4e7a';
     color = ['interpolate', ['linear'], ['get','participacion_pct'], S.part[0], from, S.part[1], to];
