@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Así votó cada rincón de Navarra · Generales 2023</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,600;0,6..72,700;1,6..72,600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <style>
   :root { --ink:#1b2430; --muted:#5d6875; --line:#dde1e6; --bg:#fff; --chip:#f3f4f6; }
@@ -12,7 +15,7 @@
   body { font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; color:var(--ink); background:var(--bg); }
   .app { display:grid; grid-template-columns:350px 1fr; height:100%; }
   aside { padding:20px 20px 16px; overflow-y:auto; border-right:1px solid var(--line); }
-  h1 { font:700 27px/1.15 Georgia,"Times New Roman",serif; margin:0 0 8px; }
+  h1 { font-family:'Newsreader',Georgia,"Times New Roman",serif; font-weight:700; font-size:29px; line-height:1.12; letter-spacing:-0.015em; margin:0 0 8px; }
   .sub { margin:0 0 16px; color:var(--muted); font-size:14px; }
   .search input { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:6px; font:inherit; }
   .modes { display:flex; flex-direction:column; gap:3px; margin:14px 0 6px; }
@@ -25,7 +28,7 @@
   .ramp { height:10px; border-radius:5px; margin:6px 0 3px; }
   .ticks { display:flex; justify-content:space-between; }
   #panel { border-top:1px solid var(--line); padding-top:14px; min-height:230px; }
-  #panel h2 { font:700 19px/1.2 Georgia,serif; margin:0; }
+  #panel h2 { font:700 19px/1.2 'Newsreader',Georgia,serif; margin:0; }
   .where { color:var(--muted); font-size:13px; margin:2px 0 8px; }
   .bar { display:grid; grid-template-columns:86px 1fr 52px; align-items:center; gap:8px; margin:5px 0; font-size:13px; }
   .track { height:12px; background:var(--chip); border-radius:3px; overflow:hidden; }
@@ -39,7 +42,7 @@
   .lbl.bar { font-size:12px; font-weight:600; font-style:italic; }
   .brand { display:block; height:36px; max-width:100%; margin:0 0 14px; object-fit:contain; object-position:left; }
   .maplibregl-popup-content { padding:12px 14px; border-radius:8px; font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink); }
-  .pop h3 { font:700 17px/1.2 Georgia,serif; margin:0 16px 2px 0; }
+  .pop h3 { font:700 17px/1.2 'Newsreader',Georgia,serif; margin:0 16px 2px 0; }
   .pop .where { margin:0 0 6px; }
   .pop table { border-collapse:collapse; width:100%; }
   .pop td { padding:3px 0; vertical-align:middle; }
@@ -48,11 +51,47 @@
   .pop td.lg img { display:block; height:22px; max-width:28px; object-fit:contain; }
   .pop td.n { text-align:right; padding-left:10px; font-variant-numeric:tabular-nums; }
   .pop .foot { margin:6px 0 0; color:var(--muted); font-size:12px; }
+
+  /* Forzar atribución compacta plegada por defecto incluso en escritorio */
+  .maplibregl-ctrl-attrib.maplibregl-compact { min-height:24px; }
+  .maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show) .maplibregl-ctrl-attrib-inner { display:none !important; }
+  .maplibregl-ctrl-attrib.maplibregl-compact .maplibregl-ctrl-attrib-button { display:block !important; }
+
   @media (max-width:760px) {
     .app { grid-template-columns:1fr; height:auto; }
-    #map { order:-1; height:62vh; }
-    aside { border-right:0; }
-    h1 { font-size:23px; }
+    #map { order:-1; height:54vh; min-height:320px; }
+    aside { border-right:0; padding:16px 16px 20px; }
+    h1 { font-size:25px; }
+    .sub { margin-bottom:12px; font-size:13.5px; }
+    /* Selector de partidos compacto en móvil (2 columnas o píldoras adaptables) para evitar scroll excesivo */
+    .modes {
+      display:grid;
+      grid-template-columns:repeat(2, minmax(0, 1fr));
+      gap:6px;
+      margin:12px 0 8px;
+    }
+    .modes button {
+      padding:7px 8px;
+      font-size:13px;
+      background:var(--chip);
+      border:1px solid transparent;
+      border-radius:7px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .modes button[data-m="ganador"] {
+      grid-column:1 / -1;
+      justify-content:center;
+    }
+    .modes button[aria-pressed="true"] {
+      background:#eef3f8;
+      border-color:var(--ink);
+      box-shadow:none;
+    }
+    .sw { width:11px; height:11px; }
+    .legend { margin:8px 0 12px; }
+    #panel { min-height:auto; padding-top:12px; }
   }
 </style>
 </head>
@@ -84,7 +123,7 @@ const P = [
 const OTROS = '#9aa0a6';
 const f1 = x => x.toLocaleString('es-ES', { minimumFractionDigits:1, maximumFractionDigits:1 });
 const f0 = x => x.toLocaleString('es-ES');
-const norm = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const quant = (a, p) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(p * (s.length - 1))]; };
 const $ = id => document.getElementById(id);
 
@@ -116,12 +155,32 @@ function loadBase() {
 function boot(style) {
   map = new maplibregl.Map({
     container:'map', style, bounds:NAV, fitBoundsOptions:{ padding:16 }, dragRotate:false,
-    attributionControl:{ compact:true, customAttribution:'<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> © ' }
+    attributionControl:false
   });
+  map.addControl(new maplibregl.AttributionControl({
+    compact:true,
+    customAttribution:'<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>'
+  }), 'bottom-right');
   map.touchZoomRotate.disableRotation();
   map.addControl(new maplibregl.NavigationControl({ showCompass:false }), 'top-right');
-  map.on('load', () => { ready = true; limitZoom(); start(); });
-  map.on('resize', limitZoom);
+  map.on('load', () => {
+    // Asegura que el panel de atribución arranque cerrado en todos los tamaños de pantalla
+    const attribEl = map.getContainer().querySelector('.maplibregl-ctrl-attrib');
+    if (attribEl) {
+      attribEl.classList.add('maplibregl-compact');
+      attribEl.classList.remove('maplibregl-compact-show');
+    }
+    ready = true;
+    limitZoom();
+    start();
+  });
+  map.on('resize', () => {
+    const attribEl = map.getContainer().querySelector('.maplibregl-ctrl-attrib');
+    if (attribEl && !attribEl.classList.contains('maplibregl-compact')) {
+      attribEl.classList.add('maplibregl-compact');
+    }
+    limitZoom();
+  });
 }
 
 // El zoom hacia atrás se detiene cuando Navarra encaja en el recuadro del mapa
