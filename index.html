@@ -143,6 +143,15 @@ let STREET_LABELS = [];
 let PLACE_LABELS = [];
 let BUILDING_LAYERS = [];
 
+// Localidades visibles desde el encuadre inicial sin hacer zoom
+const ALWAYS_VISIBLE_CITIES = [
+  'pamplona', 'iruna', 'irunea',
+  'tudela',
+  'tafalla',
+  'estella-lizarra', 'estella', 'lizarra',
+  'sanguesa', 'zangoza'
+];
+
 // Excluye regiones, comunidades, países o nombres como Navarre / Basque Country
 const EXCLUDED_PLACE_NAMES = [
   'navarre', 'navarra', 'nafarrroa',
@@ -186,23 +195,33 @@ function loadBase() {
     // Etiquetas de calles y carreteras
     STREET_LABELS = s.layers.filter(l => l.type === 'symbol' && l['source-layer'] === 'transportation_name');
 
-    // Nombres de pueblos y ciudades solo al acercar mucho el zoom (sin regiones/países)
+    // Nombres de pueblos y ciudades: Pamplona, Tudela, Tafalla, Estella-Lizarra y Sangüesa siempre visibles;
+    // el resto entra un poco antes (a partir de zoom 11.2), sin regiones ni países.
     PLACE_LABELS = s.layers
       .filter(l => l.type === 'symbol' && l['source-layer'] === 'place' && !isExcludedPlaceLayer(l))
-      .map(l => ({
-        ...l,
-        minzoom: Math.max(l.minzoom || 0, 12.5),
-        filter: buildPlaceFilter(l.filter),
-        layout: {
-          ...(l.layout || {}),
-          visibility: 'visible'
-        },
-        paint: {
-          ...(l.paint || {}),
-          'text-halo-color': 'rgba(255, 255, 255, 0.92)',
-          'text-halo-width': 1.5
-        }
-      }));
+      .map(l => {
+        const isFeatured = [
+          'in',
+          ['downcase', ['coalesce', ['get', 'name:es'], ['get', 'name'], '']],
+          ['literal', ALWAYS_VISIBLE_CITIES]
+        ];
+        return {
+          ...l,
+          minzoom: 0,
+          filter: buildPlaceFilter(l.filter),
+          layout: {
+            ...(l.layout || {}),
+            visibility: 'visible',
+            'text-optional': true
+          },
+          paint: {
+            ...(l.paint || {}),
+            'text-opacity': ['step', ['zoom'], ['case', isFeatured, 1, 0], 11.2, 1],
+            'text-halo-color': 'rgba(255, 255, 255, 0.92)',
+            'text-halo-width': 1.5
+          }
+        };
+      });
 
     // Siluetas de edificios para montarlas encima del relleno electoral con opacidad sutil
     BUILDING_LAYERS = s.layers
@@ -323,7 +342,7 @@ function init() {
   map.addLayer({ id:'muni', type:'line', source:'sec', filter:['==', ['get','NMUN'], ''], paint:{ 'line-color':'#1b2430', 'line-width':1.6 } });
   map.addLayer({ id:'sel', type:'line', source:'sec', filter:['==', ['get','CUSEC'], ''], paint:{ 'line-color':'#1b2430', 'line-width':2.6 } });
 
-  // Nombres de pueblos y ciudades solo al acercar mucho el zoom, encima de los polígonos electorales
+  // Nombres de pueblos y ciudades por encima de los polígonos electorales
   PLACE_LABELS.forEach(l => {
     if (!map.getLayer(l.id)) map.addLayer(l);
   });
@@ -393,7 +412,8 @@ function render(p) {
     '<p class="where">Porcentajes sobre ' + f0(p.votos_candidaturas) + ' votos a candidaturas. En blanco: ' + f0(p.blancos) + '. Nulos: ' + f0(p.nulos) + '.</p>';
 }
 
-// Etiquetas de pueblos, ciudades y barrios solo al acercar mucho el zoom, sin solaparse.
+// Pamplona, Tudela, Tafalla, Estella-Lizarra y Sangüesa se muestran sin hacer zoom;
+// el resto de municipios entran a partir de zoom 11.2 y barrios de Pamplona desde 12.5.
 let labels = [];
 function buildLabels() {
   const mk = (txt, e, lon, lat, cls, extra) => {
@@ -407,11 +427,12 @@ function buildLabels() {
   };
   if (muns) muns.features.forEach(f => {
     const p = f.properties, txt = p.NMUN.split('/')[0];
-    labels.push(mk(txt, p.e, p.lon, p.lat, p.e >= 10000 ? 'big' : '', { minZ:12.5 }));
+    const featured = ALWAYS_VISIBLE_CITIES.includes(norm(txt));
+    labels.push(mk(txt, p.e, p.lon, p.lat, featured || p.e >= 10000 ? 'big' : '', { minZ: featured ? 0 : 11.2 }));
   });
   if (bar) bar.features.forEach(f => {
     const p = f.properties;
-    labels.push(mk(p.NBAR.split('/')[0], 1e9, p.lon, p.lat, 'bar', { minZ:13 }));
+    labels.push(mk(p.NBAR.split('/')[0], 1e9, p.lon, p.lat, 'bar', { minZ:12.5 }));
   });
   labels.sort((a, b) => b.e - a.e);
   map.on('moveend', updateLabels);
@@ -422,7 +443,7 @@ function updateLabels() {
   const z = map.getZoom(), W = map.getContainer().clientWidth, H = map.getContainer().clientHeight;
   const placed = [];
   labels.forEach(l => {
-    let show = z >= (l.minZ || 12.5) && !(l.hideAt && z >= l.hideAt);
+    let show = z >= (l.minZ ?? 11.2) && !(l.hideAt && z >= l.hideAt);
     if (show) {
       const pt = map.project([l.lon, l.lat]);
       const b = { x1:pt.x - l.w / 2, x2:pt.x + l.w / 2, y1:pt.y - l.h / 2, y2:pt.y + l.h / 2 };
