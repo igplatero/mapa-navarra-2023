@@ -123,7 +123,7 @@ const P = [
 const OTROS = '#9aa0a6';
 const f1 = x => x.toLocaleString('es-ES', { minimumFractionDigits:1, maximumFractionDigits:1 });
 const f0 = x => x.toLocaleString('es-ES');
-const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const norm = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const quant = (a, p) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(p * (s.length - 1))]; };
 const $ = id => document.getElementById(id);
 
@@ -140,12 +140,52 @@ popup.on('close', () => {
 const NAV = [[-2.5, 41.9], [-0.72, 43.32]];
 const PLAIN = { version:8, sources:{}, layers:[{ id:'bg', type:'background', paint:{ 'background-color':'#f3f4f6' } }] };
 let STREET_LABELS = [];
+let PLACE_LABELS = [];
+let BUILDING_LAYERS = [];
 
-// Base de calles de OpenFreeMap (gratuita, sin clave). Si no carga, el mapa sigue con fondo liso.
+// Base de calles, edificios y topónimos de OpenFreeMap (gratuita, sin clave).
 function loadBase() {
   return fetch('https://tiles.openfreemap.org/styles/positron').then(r => r.json()).then(s => {
-    const keep = ['water', 'waterway', 'landcover', 'landuse', 'park', 'transportation', 'building', 'aeroway'];
+    const keep = ['water', 'waterway', 'landcover', 'landuse', 'park', 'transportation', 'aeroway'];
+
+    // Etiquetas de calles y carreteras
     STREET_LABELS = s.layers.filter(l => l.type === 'symbol' && l['source-layer'] === 'transportation_name');
+
+    // Nombres de pueblos, aldeas y ciudades (visibles por encima del color electoral)
+    PLACE_LABELS = s.layers
+      .filter(l => l.type === 'symbol' && l['source-layer'] === 'place')
+      .map(l => ({
+        ...l,
+        layout: {
+          ...(l.layout || {}),
+          visibility: 'visible'
+        },
+        paint: {
+          ...(l.paint || {}),
+          'text-halo-color': 'rgba(255, 255, 255, 0.92)',
+          'text-halo-width': 1.5
+        }
+      }));
+
+    // Siluetas de edificios para montarlas encima del relleno electoral con opacidad sutil
+    BUILDING_LAYERS = s.layers
+      .filter(l => l['source-layer'] === 'building' && l.type === 'fill')
+      .map(l => ({
+        ...l,
+        id: 'electoral-' + l.id,
+        minzoom: 13.5,
+        layout: {
+          ...(l.layout || {}),
+          visibility: 'visible'
+        },
+        paint: {
+          ...(l.paint || {}),
+          'fill-color': '#1b2430',
+          'fill-opacity': ['interpolate', ['linear'], ['zoom'], 13.5, 0.06, 16, 0.22],
+          'fill-outline-color': 'rgba(27, 36, 48, 0.34)'
+        }
+      }));
+
     const layers = s.layers.filter(l => l.type === 'background' || (l.type !== 'symbol' && keep.includes(l['source-layer'])));
     const { center, zoom, bearing, pitch, ...rest } = s;
     return { ...rest, layers };
@@ -220,6 +260,12 @@ function init() {
     map.addSource('sd', { type:'geojson', data:sd });
     map.addLayer({ id:'sd-fill', type:'fill', source:'sd', paint:{ 'fill-color':'#dfe2e6', 'fill-opacity':['interpolate', ['linear'], ['zoom'], 11, 1, 14, 0.6] } }, 'fill');
   }
+
+  // Siluetas de edificios encima del relleno electoral pero debajo de límites y etiquetas
+  BUILDING_LAYERS.forEach(l => {
+    if (!map.getLayer(l.id)) map.addLayer(l);
+  });
+
   map.addLayer({ id:'line', type:'line', source:'sec', paint:{ 'line-color':'#fff', 'line-width':0.4 } });
   if (muns) {
     map.addSource('mun', { type:'geojson', data:muns });
@@ -239,7 +285,20 @@ function init() {
   }
   map.addLayer({ id:'muni', type:'line', source:'sec', filter:['==', ['get','NMUN'], ''], paint:{ 'line-color':'#1b2430', 'line-width':1.6 } });
   map.addLayer({ id:'sel', type:'line', source:'sec', filter:['==', ['get','CUSEC'], ''], paint:{ 'line-color':'#1b2430', 'line-width':2.6 } });
-  STREET_LABELS.forEach(l => map.addLayer(l));
+
+  // Nombres de pueblos, ciudades y calles por encima de los polígonos electorales
+  // Si ya tenemos el GeoJSON de municipios cargado, filtramos ciudades/pueblos principales para no duplicarlos con buildLabels()
+  PLACE_LABELS.forEach(l => {
+    if (!map.getLayer(l.id)) {
+      const layer = muns && (l.id.includes('city') || l.id.includes('town'))
+        ? { ...l, minzoom: Math.max(l.minzoom || 0, 12.2) }
+        : l;
+      map.addLayer(layer);
+    }
+  });
+  STREET_LABELS.forEach(l => {
+    if (!map.getLayer(l.id)) map.addLayer(l);
+  });
 
   const names = [...new Set(data.features.map(f => f.properties.NMUN))].sort((a, b) => a.localeCompare(b, 'es'));
   $('munis').innerHTML = names.map(n => '<option value="' + n + '">').join('');
@@ -269,7 +328,7 @@ function init() {
 function setMode(m) {
   mode = m;
   document.querySelectorAll('#modes button').forEach(b => b.setAttribute('aria-pressed', b.dataset.m === m));
-  let color, opac = ['interpolate', ['linear'], ['zoom'], 11, 1, 14, 0.7], from, to, max;
+  let color, opac = ['interpolate', ['linear'], ['zoom'], 11, 1, 14, 0.7], from, to;
   if (m === 'ganador') {
     color = ['match', ['get','ganador'], ...P.flatMap(p => [p.k, p.c]), '#999'];
     const g = (a, b) => ['interpolate', ['linear'], ['get','pct_ganador'], 25, a, 60, b];
